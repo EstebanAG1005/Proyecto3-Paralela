@@ -107,6 +107,12 @@ __global__ void GPU_HoughTran(unsigned char *pic, int w, int h, int *acc, float 
 //*****************************************************************
 int main(int argc, char **argv)
 {
+  if (argc != 2)
+  {
+    printf("Usage: %s <image.pgm>\n", argv[0]);
+    return -1;
+  }
+
   int i;
 
   PGMImage inImg(argv[1]);
@@ -115,9 +121,9 @@ int main(int argc, char **argv)
   int w = inImg.x_dim;
   int h = inImg.y_dim;
 
-  // Allocate memory for cosine and sine values
   float *d_Cos;
   float *d_Sin;
+
   cudaMalloc((void **)&d_Cos, sizeof(float) * degreeBins);
   cudaMalloc((void **)&d_Sin, sizeof(float) * degreeBins);
 
@@ -138,36 +144,47 @@ int main(int argc, char **argv)
   float rMax = sqrt(1.0 * w * w + 1.0 * h * h) / 2;
   float rScale = 2 * rMax / rBins;
 
-  // TODO eventualmente volver memoria global
   cudaMemcpy(d_Cos, pcCos, sizeof(float) * degreeBins, cudaMemcpyHostToDevice);
   cudaMemcpy(d_Sin, pcSin, sizeof(float) * degreeBins, cudaMemcpyHostToDevice);
 
-  // setup and copy data from host to device
-  unsigned char *d_in, *h_in;
-  int *d_hough, *h_hough;
-
-  h_in = inImg.pixels; // h_in contiene los pixeles de la imagen
-
-  h_hough = (int *)malloc(degreeBins * rBins * sizeof(int));
+  unsigned char *d_in;
+  int *d_hough;
+  int *h_hough = (int *)malloc(degreeBins * rBins * sizeof(int));
 
   cudaMalloc((void **)&d_in, sizeof(unsigned char) * w * h);
   cudaMalloc((void **)&d_hough, sizeof(int) * degreeBins * rBins);
-  cudaMemcpy(d_in, h_in, sizeof(unsigned char) * w * h, cudaMemcpyHostToDevice);
+  cudaMemcpy(d_in, inImg.pixels, sizeof(unsigned char) * w * h, cudaMemcpyHostToDevice);
   cudaMemset(d_hough, 0, sizeof(int) * degreeBins * rBins);
 
-  // execution configuration uses a 1-D grid of 1-D blocks, each made of 256 threads
-  // 1 thread por pixel
-  int blockNum = ceil(w * h / 256);
+  // Define CUDA events for timing
+  cudaEvent_t start, stop;
+  cudaEventCreate(&start);
+  cudaEventCreate(&stop);
+
+  // Record the start event
+  cudaEventRecord(start, NULL);
+
+  // Launch the kernel
+  int blockNum = ceil((float)w * h / 256.0);
   GPU_HoughTran<<<blockNum, 256>>>(d_in, w, h, d_hough, rMax, rScale, d_Cos, d_Sin);
 
-  // get results from device
+  // Record the stop event
+  cudaEventRecord(stop, NULL);
+  cudaEventSynchronize(stop);
+
+  // Calculate and print the elapsed time
+  float milliseconds = 0;
+  cudaEventElapsedTime(&milliseconds, start, stop);
+  printf("GPU Hough Transform tomo %f milisegundos\n", milliseconds);
+
+  // Copy results back to host
   cudaMemcpy(h_hough, d_hough, sizeof(int) * degreeBins * rBins, cudaMemcpyDeviceToHost);
 
-  // compare CPU and GPU results
+  // Compare CPU and GPU results
   for (i = 0; i < degreeBins * rBins; i++)
   {
     if (cpuht[i] != h_hough[i])
-      printf("Calculation mismatch at : %i %i %i\n", i, cpuht[i], h_hough[i]);
+      printf("Mismatch at index %d: CPU=%d, GPU=%d\n", i, cpuht[i], h_hough[i]);
   }
 
   // Free dynamically allocated memory
@@ -180,9 +197,11 @@ int main(int argc, char **argv)
   free(h_hough);
   delete[] cpuht;
 
-  printf("Done!\n");
+  // Destroy the events
+  cudaEventDestroy(start);
+  cudaEventDestroy(stop);
 
-  // TODO clean-up
+  printf("Done!\n");
 
   return 0;
 }
