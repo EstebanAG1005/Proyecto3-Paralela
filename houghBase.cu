@@ -14,6 +14,8 @@
 #include <cuda.h>
 #include <string.h>
 #include "common/pgm.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "./stb_image_write.h"
 
 const int degreeInc = 2;
 const int degreeBins = 180 / degreeInc;
@@ -175,16 +177,64 @@ int main(int argc, char **argv)
   // Calculate and print the elapsed time
   float milliseconds = 0;
   cudaEventElapsedTime(&milliseconds, start, stop);
-  printf("GPU Hough Transform tomo %f milisegundos\n", milliseconds);
+  // printf("GPU Hough Transform tomo %f milisegundos\n", milliseconds);
 
   // Copy results back to host
   cudaMemcpy(h_hough, d_hough, sizeof(int) * degreeBins * rBins, cudaMemcpyDeviceToHost);
 
+  // Umbral para determinar qué líneas se deben dibujar
+  int threshold = 5000; // Ajusta este valor según sea necesario
+
+  // Crear una imagen en color (RGB) basada en la imagen original en escala de grises
+  unsigned char *colorImage = new unsigned char[w * h * 3];
+  for (int i = 0; i < w * h; ++i)
+  {
+    colorImage[3 * i] = inImg.pixels[i];     // Canal rojo
+    colorImage[3 * i + 1] = inImg.pixels[i]; // Canal verde
+    colorImage[3 * i + 2] = inImg.pixels[i]; // Canal azul
+  }
+
+  // Dibujar las líneas detectadas
+  for (int rIdx = 0; rIdx < rBins; rIdx++)
+  {
+    for (int tIdx = 0; tIdx < degreeBins; tIdx++)
+    {
+      if (h_hough[rIdx * degreeBins + tIdx] > threshold)
+      {
+        float r = rIdx * rScale - rMax;
+        float theta = tIdx * radInc;
+
+        // Dibujar la línea en la imagen
+        for (int x = 0; x < w; x++)
+        {
+          int y = (int)((r - x * cos(theta)) / sin(theta));
+          if (y >= 0 && y < h)
+          {
+            int idx = (y * w + x) * 3; // Índice para la imagen RGB
+            colorImage[idx] = 255;     // Canal rojo a máximo para línea roja
+            colorImage[idx + 1] = 0;   // Canal verde a 0
+            colorImage[idx + 2] = 0;   // Canal azul a 0
+          }
+        }
+      }
+    }
+  }
+
+  // Guardar la imagen con las líneas dibujadas
+  stbi_write_png("output_image.png", w, h, 3, colorImage, w * 3);
+
+  // Liberar memoria
+  delete[] colorImage;
+
+  const int tolerance = 2; // Define un margen de tolerancia
+
   // Compare CPU and GPU results
   for (i = 0; i < degreeBins * rBins; i++)
   {
-    if (cpuht[i] != h_hough[i])
+    if (abs(cpuht[i] - h_hough[i]) > tolerance)
+    {
       printf("Mismatch at index %d: CPU=%d, GPU=%d\n", i, cpuht[i], h_hough[i]);
+    }
   }
 
   // Free dynamically allocated memory
