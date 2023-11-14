@@ -16,6 +16,8 @@
 #include "common/pgm.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "./stb_image_write.h"
+#include <cmath>
+#include <iostream>
 
 const int degreeInc = 2;
 const int degreeBins = 180 / degreeInc;
@@ -106,6 +108,26 @@ __global__ void GPU_HoughTran(unsigned char *pic, int w, int h, int *acc, float 
   // faltara sincronizar los hilos del bloque en algunos lados
 }
 
+float calculateAverage(int *array, int size)
+{
+  float sum = 0;
+  for (int i = 0; i < size; i++)
+  {
+    sum += array[i];
+  }
+  return sum / size;
+}
+
+float calculateStdDev(int *array, int size, float average)
+{
+  float variance = 0;
+  for (int i = 0; i < size; i++)
+  {
+    variance += pow(array[i] - average, 2);
+  }
+  return sqrt(variance / size);
+}
+
 //*****************************************************************
 int main(int argc, char **argv)
 {
@@ -182,25 +204,12 @@ int main(int argc, char **argv)
   // Copy results back to host
   cudaMemcpy(h_hough, d_hough, sizeof(int) * degreeBins * rBins, cudaMemcpyDeviceToHost);
 
-  // Calcular el promedio de los pesos
-  float sum = 0;
-  for (int i = 0; i < degreeBins * rBins; i++)
-  {
-    sum += h_hough[i];
-  }
-  float average = sum / (degreeBins * rBins);
+  // Calcular el promedio y la desviación estándar
+  const int arraySize = degreeBins * rBins;
+  float average = calculateAverage(h_hough, arraySize);
+  float stdDev = calculateStdDev(h_hough, arraySize, average);
 
-  // Calcular la desviación estándar
-  float variance = 0;
-  for (int i = 0; i < degreeBins * rBins; i++)
-  {
-    variance += pow(h_hough[i] - average, 2);
-  }
-  variance /= (degreeBins * rBins);
-  float stdDev = sqrt(variance);
-
-  // Umbral dinámico basado en el promedio y la desviación estándar
-  int dynamic_threshold = (int)(average + (stdDev * 2));
+  int dynamic_threshold = static_cast<int>(average + (stdDev * 2));
 
   // Crear una copia de la imagen de entrada para dibujar las líneas
   unsigned char *outputImage = new unsigned char[w * h * 3]; // 3 canales: RGB
@@ -221,7 +230,6 @@ int main(int argc, char **argv)
         float r = rIdx * rScale - rMax;
         float theta = tIdx * radInc;
 
-        // Asumir que el fondo de la imagen es negro para evitar dibujar en áreas de baja intensidad
         for (int x = 0; x < w; x++)
         {
           int y = (int)((r - x * cos(theta)) / sin(theta));
@@ -229,7 +237,7 @@ int main(int argc, char **argv)
           {
             int idx = y * w + x;
             if (inImg.pixels[idx] > 0)
-            { // solo dibujar si el pixel no es negro
+            {
               idx *= 3;
               outputImage[idx] = 255;   // R
               outputImage[idx + 1] = 0; // G
@@ -244,9 +252,8 @@ int main(int argc, char **argv)
   // Guardar la imagen resultante en formato PNG
   stbi_write_png("output_image.png", w, h, 3, outputImage, w * 3);
 
-  // Liberar la memoria utilizada
+  // Liberar memoria
   delete[] outputImage;
-
   const int tolerance = 1; // Define un margen de tolerancia
 
   // Compare CPU and GPU results

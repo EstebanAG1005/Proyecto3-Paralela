@@ -213,6 +213,7 @@ int main(int argc, char **argv)
     // Calculate and print the elapsed time
     float milliseconds = 0;
     cudaEventElapsedTime(&milliseconds, start, stop);
+
     // Copy results back to host
     cudaMemcpy(h_hough, d_hough, sizeof(int) * degreeBins * rBins, cudaMemcpyDeviceToHost);
 
@@ -291,9 +292,8 @@ int main(int argc, char **argv)
             printf("Mismatch at index %d: CPU=%d, GPU=%d\n", i, cpuht[i], h_hough[i]);
         }
     }
-    printf("GPU Hough Transform tomo %f milisegundos\n", milliseconds);
 
-    printf("Done!\n");
+    printf("GPU Hough Transform tomo %f milisegundos\n", milliseconds);
 
     // Free dynamically allocated memory
     cudaFree(d_Cos);
@@ -308,6 +308,8 @@ int main(int argc, char **argv)
     // Destroy the events
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
+
+    printf("Done!\n");
 
     return 0;
 }
