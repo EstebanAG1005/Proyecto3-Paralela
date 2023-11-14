@@ -21,6 +21,7 @@ const int degreeInc = 2;
 const int degreeBins = 180 / degreeInc;
 const int rBins = 100;
 const float radInc = degreeInc * M_PI / 180;
+
 //*****************************************************************
 // The CPU function returns a pointer to the accummulator
 void CPU_HoughTran(unsigned char *pic, int w, int h, int **acc)
@@ -106,6 +107,41 @@ __global__ void GPU_HoughTran(unsigned char *pic, int w, int h, int *acc, float 
     // faltara sincronizar los hilos del bloque en algunos lados
 }
 
+// constant memory
+__constant__ float dCos[degreeBins];
+__constant__ float dSin[degreeBins];
+
+__global__ void GPU_HoughTranConst(unsigned char *pic, int w, int h, int *acc, float rMax, float rScale)
+{
+    // We get the global ID
+    int gloID = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (gloID > w * h)
+        return; // if the global id is greater than the number of pixels we return
+
+    int xCent = w / 2;
+    int yCent = h / 2;
+
+    // We get the coordinates of the pixel
+    // The x coordinate is obtained by means of the modulo operation with the width of the image. doing the remainder we obtain the column and the subtraction is even to centralize the coordinate
+    int xCoord = gloID % w - xCent;
+    // The y-coordinate is obtained by means of the integer division operation with the width of the image. We do the integer division to obtain the row and the subtraction is to centralize the coordinate
+    int yCoord = yCent - gloID / w;
+
+    if (pic[gloID] > 0)
+    {
+        for (int tIdx = 0; tIdx < degreeBins; tIdx++)
+        {
+            // we calculate the radius
+            float r = xCoord * dCos[tIdx] + yCoord * dSin[tIdx];
+            // we calculate the index of the radius
+            int rIdx = (r + rMax) / rScale;
+            // Because it is done based on the angles, it may be that at some point they will touch, which is why an atomic add is done
+            atomicAdd(acc + (rIdx * degreeBins + tIdx), 1);
+        }
+    }
+}
+
 //*****************************************************************
 int main(int argc, char **argv)
 {
@@ -146,8 +182,8 @@ int main(int argc, char **argv)
     float rMax = sqrt(1.0 * w * w + 1.0 * h * h) / 2;
     float rScale = 2 * rMax / rBins;
 
-    cudaMemcpy(d_Cos, pcCos, sizeof(float) * degreeBins, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_Sin, pcSin, sizeof(float) * degreeBins, cudaMemcpyHostToDevice);
+    cudaMemcpyToSymbol(d_Cos, pcCos, sizeof(float) * degreeBins);
+    cudaMemcpyToSymbol(d_Sin, pcSin, sizeof(float) * degreeBins);
 
     unsigned char *d_in;
     int *d_hough;
@@ -168,7 +204,7 @@ int main(int argc, char **argv)
 
     // Launch the kernel
     int blockNum = ceil((float)w * h / 256.0);
-    GPU_HoughTran<<<blockNum, 256>>>(d_in, w, h, d_hough, rMax, rScale, d_Cos, d_Sin);
+    GPU_HoughTranConst<<<blockNum, 256>>>(d_in, w, h, d_hough, rMax, rScale);
 
     // Record the stop event
     cudaEventRecord(stop, NULL);
@@ -177,56 +213,75 @@ int main(int argc, char **argv)
     // Calculate and print the elapsed time
     float milliseconds = 0;
     cudaEventElapsedTime(&milliseconds, start, stop);
-    // printf("GPU Hough Transform tomo %f milisegundos\n", milliseconds);
-
     // Copy results back to host
     cudaMemcpy(h_hough, d_hough, sizeof(int) * degreeBins * rBins, cudaMemcpyDeviceToHost);
 
-    // Umbral para determinar qué líneas se deben dibujar
-    int threshold = 5000; // Ajusta este valor según sea necesario
+    // Calcular el promedio de los pesos
+    float sum = 0;
+    for (int i = 0; i < degreeBins * rBins; i++)
+    {
+        sum += h_hough[i];
+    }
+    float average = sum / (degreeBins * rBins);
 
-    // Crear una imagen en color (RGB) basada en la imagen original en escala de grises
-    unsigned char *colorImage = new unsigned char[w * h * 3];
+    // Calcular la desviación estándar
+    float variance = 0;
+    for (int i = 0; i < degreeBins * rBins; i++)
+    {
+        variance += pow(h_hough[i] - average, 2);
+    }
+    variance /= (degreeBins * rBins);
+    float stdDev = sqrt(variance);
+
+    // Umbral dinámico basado en el promedio y la desviación estándar
+    int dynamic_threshold = (int)(average + (stdDev * 2));
+
+    // Crear una copia de la imagen de entrada para dibujar las líneas
+    unsigned char *outputImage = new unsigned char[w * h * 3]; // 3 canales: RGB
     for (int i = 0; i < w * h; ++i)
     {
-        colorImage[3 * i] = inImg.pixels[i];     // Canal rojo
-        colorImage[3 * i + 1] = inImg.pixels[i]; // Canal verde
-        colorImage[3 * i + 2] = inImg.pixels[i]; // Canal azul
+        outputImage[3 * i] = inImg.pixels[i];
+        outputImage[3 * i + 1] = inImg.pixels[i];
+        outputImage[3 * i + 2] = inImg.pixels[i];
     }
 
-    // Dibujar las líneas detectadas
+    // Dibujar las líneas cuyo peso es mayor que el umbral dinámico
     for (int rIdx = 0; rIdx < rBins; rIdx++)
     {
         for (int tIdx = 0; tIdx < degreeBins; tIdx++)
         {
-            if (h_hough[rIdx * degreeBins + tIdx] > threshold)
+            if (h_hough[rIdx * degreeBins + tIdx] > dynamic_threshold)
             {
                 float r = rIdx * rScale - rMax;
                 float theta = tIdx * radInc;
 
-                // Dibujar la línea en la imagen
+                // Asumir que el fondo de la imagen es negro para evitar dibujar en áreas de baja intensidad
                 for (int x = 0; x < w; x++)
                 {
                     int y = (int)((r - x * cos(theta)) / sin(theta));
                     if (y >= 0 && y < h)
                     {
-                        int idx = (y * w + x) * 3; // Índice para la imagen RGB
-                        colorImage[idx] = 255;     // Canal rojo a máximo para línea roja
-                        colorImage[idx + 1] = 0;   // Canal verde a 0
-                        colorImage[idx + 2] = 0;   // Canal azul a 0
+                        int idx = y * w + x;
+                        if (inImg.pixels[idx] > 0)
+                        { // solo dibujar si el pixel no es negro
+                            idx *= 3;
+                            outputImage[idx] = 255;   // R
+                            outputImage[idx + 1] = 0; // G
+                            outputImage[idx + 2] = 0; // B
+                        }
                     }
                 }
             }
         }
     }
 
-    // Guardar la imagen con las líneas dibujadas
-    stbi_write_png("output_image.png", w, h, 3, colorImage, w * 3);
+    // Guardar la imagen resultante en formato PNG
+    stbi_write_png("output_image_constante.png", w, h, 3, outputImage, w * 3);
 
-    // Liberar memoria
-    delete[] colorImage;
+    // Liberar la memoria utilizada
+    delete[] outputImage;
 
-    const int tolerance = 2; // Define un margen de tolerancia
+    const int tolerance = 1; // Define un margen de tolerancia
 
     // Compare CPU and GPU results
     for (i = 0; i < degreeBins * rBins; i++)
@@ -236,6 +291,9 @@ int main(int argc, char **argv)
             printf("Mismatch at index %d: CPU=%d, GPU=%d\n", i, cpuht[i], h_hough[i]);
         }
     }
+    printf("GPU Hough Transform tomo %f milisegundos\n", milliseconds);
+
+    printf("Done!\n");
 
     // Free dynamically allocated memory
     cudaFree(d_Cos);
@@ -250,8 +308,6 @@ int main(int argc, char **argv)
     // Destroy the events
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
-
-    printf("Done!\n");
 
     return 0;
 }

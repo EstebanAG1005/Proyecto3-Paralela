@@ -177,56 +177,77 @@ int main(int argc, char **argv)
   // Calculate and print the elapsed time
   float milliseconds = 0;
   cudaEventElapsedTime(&milliseconds, start, stop);
-  // printf("GPU Hough Transform tomo %f milisegundos\n", milliseconds);
+  //
 
   // Copy results back to host
   cudaMemcpy(h_hough, d_hough, sizeof(int) * degreeBins * rBins, cudaMemcpyDeviceToHost);
 
-  // Umbral para determinar qué líneas se deben dibujar
-  int threshold = 5000; // Ajusta este valor según sea necesario
+  // Calcular el promedio de los pesos
+  float sum = 0;
+  for (int i = 0; i < degreeBins * rBins; i++)
+  {
+    sum += h_hough[i];
+  }
+  float average = sum / (degreeBins * rBins);
 
-  // Crear una imagen en color (RGB) basada en la imagen original en escala de grises
-  unsigned char *colorImage = new unsigned char[w * h * 3];
+  // Calcular la desviación estándar
+  float variance = 0;
+  for (int i = 0; i < degreeBins * rBins; i++)
+  {
+    variance += pow(h_hough[i] - average, 2);
+  }
+  variance /= (degreeBins * rBins);
+  float stdDev = sqrt(variance);
+
+  // Umbral dinámico basado en el promedio y la desviación estándar
+  int dynamic_threshold = (int)(average + (stdDev * 2));
+
+  // Crear una copia de la imagen de entrada para dibujar las líneas
+  unsigned char *outputImage = new unsigned char[w * h * 3]; // 3 canales: RGB
   for (int i = 0; i < w * h; ++i)
   {
-    colorImage[3 * i] = inImg.pixels[i];     // Canal rojo
-    colorImage[3 * i + 1] = inImg.pixels[i]; // Canal verde
-    colorImage[3 * i + 2] = inImg.pixels[i]; // Canal azul
+    outputImage[3 * i] = inImg.pixels[i];
+    outputImage[3 * i + 1] = inImg.pixels[i];
+    outputImage[3 * i + 2] = inImg.pixels[i];
   }
 
-  // Dibujar las líneas detectadas
+  // Dibujar las líneas cuyo peso es mayor que el umbral dinámico
   for (int rIdx = 0; rIdx < rBins; rIdx++)
   {
     for (int tIdx = 0; tIdx < degreeBins; tIdx++)
     {
-      if (h_hough[rIdx * degreeBins + tIdx] > threshold)
+      if (h_hough[rIdx * degreeBins + tIdx] > dynamic_threshold)
       {
         float r = rIdx * rScale - rMax;
         float theta = tIdx * radInc;
 
-        // Dibujar la línea en la imagen
+        // Asumir que el fondo de la imagen es negro para evitar dibujar en áreas de baja intensidad
         for (int x = 0; x < w; x++)
         {
           int y = (int)((r - x * cos(theta)) / sin(theta));
           if (y >= 0 && y < h)
           {
-            int idx = (y * w + x) * 3; // Índice para la imagen RGB
-            colorImage[idx] = 255;     // Canal rojo a máximo para línea roja
-            colorImage[idx + 1] = 0;   // Canal verde a 0
-            colorImage[idx + 2] = 0;   // Canal azul a 0
+            int idx = y * w + x;
+            if (inImg.pixels[idx] > 0)
+            { // solo dibujar si el pixel no es negro
+              idx *= 3;
+              outputImage[idx] = 255;   // R
+              outputImage[idx + 1] = 0; // G
+              outputImage[idx + 2] = 0; // B
+            }
           }
         }
       }
     }
   }
 
-  // Guardar la imagen con las líneas dibujadas
-  stbi_write_png("output_image.png", w, h, 3, colorImage, w * 3);
+  // Guardar la imagen resultante en formato PNG
+  stbi_write_png("output_image.png", w, h, 3, outputImage, w * 3);
 
-  // Liberar memoria
-  delete[] colorImage;
+  // Liberar la memoria utilizada
+  delete[] outputImage;
 
-  const int tolerance = 2; // Define un margen de tolerancia
+  const int tolerance = 1; // Define un margen de tolerancia
 
   // Compare CPU and GPU results
   for (i = 0; i < degreeBins * rBins; i++)
@@ -236,6 +257,8 @@ int main(int argc, char **argv)
       printf("Mismatch at index %d: CPU=%d, GPU=%d\n", i, cpuht[i], h_hough[i]);
     }
   }
+
+  printf("GPU Hough Transform tomo %f milisegundos\n", milliseconds);
 
   // Free dynamically allocated memory
   cudaFree(d_Cos);
