@@ -179,6 +179,35 @@ __global__ void GPU_HoughTranShared(unsigned char *pic, int w, int h, int *acc, 
     }
 }
 
+float calculateAverage(int *array, int size)
+{
+    float sum = 0;
+    for (int i = 0; i < size; i++)
+    {
+        sum += array[i];
+    }
+    return sum / size;
+}
+
+float calculateStdDev(int *array, int size, float average)
+{
+    float variance = 0;
+    for (int i = 0; i < size; i++)
+    {
+        variance += pow(array[i] - average, 2);
+    }
+    return sqrt(variance / size);
+}
+
+// Función para convertir la imagen a blanco y negro
+void convertToBlackAndWhite(unsigned char *pic, int size, unsigned char threshold)
+{
+    for (int i = 0; i < size; i++)
+    {
+        pic[i] = pic[i] > threshold ? 255 : 0;
+    }
+}
+
 //*****************************************************************
 int main(int argc, char **argv)
 {
@@ -255,25 +284,14 @@ int main(int argc, char **argv)
     // Copy results back to host
     cudaMemcpy(h_hough, d_hough, sizeof(int) * degreeBins * rBins, cudaMemcpyDeviceToHost);
 
-    // Calcular el promedio de los pesos
-    float sum = 0;
-    for (int i = 0; i < degreeBins * rBins; i++)
-    {
-        sum += h_hough[i];
-    }
-    float average = sum / (degreeBins * rBins);
+    // Calcular el promedio y la desviación estándar
+    const int arraySize = degreeBins * rBins;
+    float average = calculateAverage(h_hough, arraySize);
+    float stdDev = calculateStdDev(h_hough, arraySize, average);
 
-    // Calcular la desviación estándar
-    float variance = 0;
-    for (int i = 0; i < degreeBins * rBins; i++)
-    {
-        variance += pow(h_hough[i] - average, 2);
-    }
-    variance /= (degreeBins * rBins);
-    float stdDev = sqrt(variance);
-
-    // Umbral dinámico basado en el promedio y la desviación estándar
-    int dynamic_threshold = (int)(average + (stdDev * 2));
+    // Convertir la imagen a blanco y negro
+    unsigned char threshold = 10; // Ajuste este valor según sea necesario
+    convertToBlackAndWhite(inImg.pixels, w * h, threshold);
 
     // Crear una copia de la imagen de entrada para dibujar las líneas
     unsigned char *outputImage = new unsigned char[w * h * 3]; // 3 canales: RGB
@@ -289,12 +307,11 @@ int main(int argc, char **argv)
     {
         for (int tIdx = 0; tIdx < degreeBins; tIdx++)
         {
-            if (h_hough[rIdx * degreeBins + tIdx] > dynamic_threshold)
+            if (h_hough[rIdx * degreeBins + tIdx] > threshold)
             {
                 float r = rIdx * rScale - rMax;
                 float theta = tIdx * radInc;
 
-                // Asumir que el fondo de la imagen es negro para evitar dibujar en áreas de baja intensidad
                 for (int x = 0; x < w; x++)
                 {
                     int y = (int)((r - x * cos(theta)) / sin(theta));
@@ -302,7 +319,7 @@ int main(int argc, char **argv)
                     {
                         int idx = y * w + x;
                         if (inImg.pixels[idx] > 0)
-                        { // solo dibujar si el pixel no es negro
+                        {
                             idx *= 3;
                             outputImage[idx] = 255;   // R
                             outputImage[idx + 1] = 0; // G

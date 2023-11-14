@@ -128,6 +128,15 @@ float calculateStdDev(int *array, int size, float average)
   return sqrt(variance / size);
 }
 
+// Función para convertir la imagen a blanco y negro
+void convertToBlackAndWhite(unsigned char *pic, int size, unsigned char threshold)
+{
+  for (int i = 0; i < size; i++)
+  {
+    pic[i] = pic[i] > threshold ? 255 : 0;
+  }
+}
+
 //*****************************************************************
 int main(int argc, char **argv)
 {
@@ -209,7 +218,9 @@ int main(int argc, char **argv)
   float average = calculateAverage(h_hough, arraySize);
   float stdDev = calculateStdDev(h_hough, arraySize, average);
 
-  int dynamic_threshold = static_cast<int>(average + (stdDev * 2));
+  // Convertir la imagen a blanco y negro
+  unsigned char threshold = 10; // Ajuste este valor según sea necesario
+  convertToBlackAndWhite(inImg.pixels, w * h, threshold);
 
   // Crear una copia de la imagen de entrada para dibujar las líneas
   unsigned char *outputImage = new unsigned char[w * h * 3]; // 3 canales: RGB
@@ -225,7 +236,7 @@ int main(int argc, char **argv)
   {
     for (int tIdx = 0; tIdx < degreeBins; tIdx++)
     {
-      if (h_hough[rIdx * degreeBins + tIdx] > dynamic_threshold)
+      if (h_hough[rIdx * degreeBins + tIdx] > threshold)
       {
         float r = rIdx * rScale - rMax;
         float theta = tIdx * radInc;
