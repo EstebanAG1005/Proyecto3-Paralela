@@ -82,26 +82,6 @@ __global__ void GPU_HoughTranShared(unsigned char *pic, int w, int h, int *acc, 
         atomicAdd(acc + i, localAcc[i]);
 }
 
-float calculateAverage(int *array, int size)
-{
-    float sum = 0;
-    for (int i = 0; i < size; i++)
-    {
-        sum += array[i];
-    }
-    return sum / size;
-}
-
-float calculateStdDev(int *array, int size, float average)
-{
-    float variance = 0;
-    for (int i = 0; i < size; i++)
-    {
-        variance += pow(array[i] - average, 2);
-    }
-    return sqrt(variance / size);
-}
-
 // Función para convertir la imagen a blanco y negro
 void convertToBlackAndWhite(unsigned char *pic, int size, unsigned char threshold)
 {
@@ -131,8 +111,8 @@ void drawLines(unsigned char *outputImage, int w, int h, int *h_hough, float rMa
                 int x0 = static_cast<int>(w / 2 + r * cos(theta));
                 int y0 = static_cast<int>(h / 2 - r * sin(theta));
 
-                int x1 = static_cast<int>(x0 - (w/2) * (-sin(theta)));
-                int y1 = static_cast<int>(y0 + (h/2) * (cos(theta)));
+                int x1 = static_cast<int>(x0 - (w / 2) * (-sin(theta)));
+                int y1 = static_cast<int>(y0 + (h / 2) * (cos(theta)));
 
                 // Clip the line coordinates to be within the image boundaries
                 x0 = std::max(0, std::min(x0, w - 1));
@@ -143,15 +123,15 @@ void drawLines(unsigned char *outputImage, int w, int h, int *h_hough, float rMa
                 // Draw the line on the output image
                 for (int i = 0; i < 2000; i++)
                 {
-                    int x = static_cast<int>(x0 + i * (x1 - x0) / (w/2));
-                    int y = static_cast<int>(y0 + i * (y1 - y0) / (h/2));
+                    int x = static_cast<int>(x0 + i * (x1 - x0) / (w / 2));
+                    int y = static_cast<int>(y0 + i * (y1 - y0) / (h / 2));
 
                     // Ensure that the coordinates are within the image boundaries
                     if (x >= 0 && x < w && y >= 0 && y < h)
                     {
-                        outputImage[3 * (y * w + x)] = 255;    // Red channel
-                        outputImage[3 * (y * w + x) + 1] = 0;  // Green channel
-                        outputImage[3 * (y * w + x) + 2] = 0;  // Blue channel
+                        outputImage[3 * (y * w + x)] = 0;       // Canal rojo a 0
+                        outputImage[3 * (y * w + x) + 1] = 255; // Canal verde a 255
+                        outputImage[3 * (y * w + x) + 2] = 0;   // Canal azul a 0
                     }
                 }
             }
@@ -175,8 +155,8 @@ void drawLines(unsigned char *outputImage, int w, int h, int *h_hough, float rMa
                 int x0 = static_cast<int>(w / 2 + r * cos(theta));
                 int y0 = static_cast<int>(h / 2 - r * sin(theta));
 
-                int x1 = static_cast<int>(x0 - (w/2) * (-sin(theta)));
-                int y1 = static_cast<int>(y0 + (h/2) * (cos(theta)));
+                int x1 = static_cast<int>(x0 - (w / 2) * (-sin(theta)));
+                int y1 = static_cast<int>(y0 + (h / 2) * (cos(theta)));
 
                 // Clip the line coordinates to be within the image boundaries
                 x0 = std::max(0, std::min(x0, w - 1));
@@ -187,22 +167,21 @@ void drawLines(unsigned char *outputImage, int w, int h, int *h_hough, float rMa
                 // Draw the line on the output image
                 for (int i = 0; i < 2000; i++)
                 {
-                    int x = w - static_cast<int>(x0 + i * (x1 - x0) / (w/2));
-                    int y = static_cast<int>(y0 + i * (y1 - y0) / (h/2));
+                    int x = w - static_cast<int>(x0 + i * (x1 - x0) / (w / 2));
+                    int y = static_cast<int>(y0 + i * (y1 - y0) / (h / 2));
 
                     // Ensure that the coordinates are within the image boundaries
                     if (x >= 0 && x < w && y >= 0 && y < h)
                     {
-                        outputImage[3 * (y * w + x)] = 255;    // Red channel
-                        outputImage[3 * (y * w + x) + 1] = 0;  // Green channel
-                        outputImage[3 * (y * w + x) + 2] = 0;  // Blue channel
+                        outputImage[3 * (y * w + x)] = 0;       // Canal rojo a 0
+                        outputImage[3 * (y * w + x) + 1] = 255; // Canal verde a 255
+                        outputImage[3 * (y * w + x) + 2] = 0;   // Canal azul a 0
                     }
                 }
             }
         }
     }
 }
-
 
 int main(int argc, char **argv)
 {
@@ -267,54 +246,14 @@ int main(int argc, char **argv)
 
     cudaMemcpy(h_hough, d_hough, sizeof(int) * degreeBins * rBins, cudaMemcpyDeviceToHost);
 
-    // Calcular el promedio y la desviación estándar
-    const int arraySize = degreeBins * rBins;
-    float average = calculateAverage(h_hough, arraySize);
-    float stdDev = calculateStdDev(h_hough, arraySize, average);
-
-    // Convertir la imagen a blanco y negro
-    unsigned char threshold = 10; // Ajuste este valor según sea necesario
+    unsigned char threshold = 10;
     convertToBlackAndWhite(inImg.pixels, w * h, threshold);
-
-    // Crear una copia de la imagen de entrada para dibujar las líneas
-    unsigned char *outputImage = new unsigned char[w * h * 3]; // 3 canales: RGB
-    const int staticThreshold = 3000;                          // Static threshold set to 3000
-
+    unsigned char *outputImage = new unsigned char[w * h * 3];
     for (int i = 0; i < w * h; ++i)
     {
         outputImage[3 * i] = inImg.pixels[i];
         outputImage[3 * i + 1] = inImg.pixels[i];
         outputImage[3 * i + 2] = inImg.pixels[i];
-    }
-
-    // Dibujar las líneas cuyo peso es mayor que el umbral dinámico
-    // Dibujar las líneas cuyo peso es mayor que el umbral estático
-    for (int rIdx = 0; rIdx < rBins; rIdx++)
-    {
-        for (int tIdx = 0; tIdx < degreeBins; tIdx++)
-        {
-            if (h_hough[rIdx * degreeBins + tIdx] > staticThreshold)
-            {
-                float r = rIdx * rScale - rMax;
-                float theta = tIdx * radInc;
-
-                for (int x = 0; x < w; x++)
-                {
-                    int y = (int)((r - x * cos(theta)) / sin(theta));
-                    if (y >= 0 && y < h)
-                    {
-                        int idx = y * w + x;
-                        if (inImg.pixels[idx] > 0)
-                        {
-                            idx *= 3;
-                            outputImage[idx] = 255;   // R
-                            outputImage[idx + 1] = 0; // G
-                            outputImage[idx + 2] = 0; // B
-                        }
-                    }
-                }
-            }
-        }
     }
 
     drawLines(outputImage, w, h, h_hough, rMax, rScale);
@@ -340,6 +279,8 @@ int main(int argc, char **argv)
     // Destroy the events
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
+
+    cudaDeviceReset();
 
     return 0;
 }
