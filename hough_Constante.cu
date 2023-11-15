@@ -108,35 +108,30 @@ __global__ void GPU_HoughTran(unsigned char *pic, int w, int h, int *acc, float 
 }
 
 // constant memory
-__constant__ float dCos[degreeBins];
-__constant__ float dSin[degreeBins];
+__constant__ float d_Cos[degreeBins];
+__constant__ float d_Sin[degreeBins];
 
 __global__ void GPU_HoughTranConst(unsigned char *pic, int w, int h, int *acc, float rMax, float rScale)
 {
-    // We get the global ID
+
     int gloID = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (gloID >= w * h)
-        return; // if the global id is greater than the number of pixels we return
-
+    if (gloID > w * h)
+        return;
     int xCent = w / 2;
     int yCent = h / 2;
-
-    // We get the coordinates of the pixel
-    // The x coordinate is obtained by means of the modulo operation with the width of the image. doing the remainder we obtain the column and the subtraction is even to centralize the coordinate
     int xCoord = gloID % w - xCent;
-    // The y-coordinate is obtained by means of the integer division operation with the width of the image. We do the integer division to obtain the row and the subtraction is to centralize the coordinate
     int yCoord = yCent - gloID / w;
+
+    __syncthreads();
 
     if (pic[gloID] > 0)
     {
         for (int tIdx = 0; tIdx < degreeBins; tIdx++)
         {
-            // we calculate the radius
-            float r = xCoord * dCos[tIdx] + yCoord * dSin[tIdx];
-            // we calculate the index of the radius
+
+            float r = xCoord * d_Cos[tIdx] + yCoord * d_Sin[tIdx];
             int rIdx = (r + rMax) / rScale;
-            // Because it is done based on the angles, it may be that at some point they will touch, which is why an atomic add is done
+
             atomicAdd(acc + (rIdx * degreeBins + tIdx), 1);
         }
     }
@@ -173,12 +168,6 @@ void convertToBlackAndWhite(unsigned char *pic, int size, unsigned char threshol
 //*****************************************************************
 int main(int argc, char **argv)
 {
-    if (argc != 2)
-    {
-        printf("Usage: %s <image.pgm>\n", argv[0]);
-        return -1;
-    }
-
     int i;
 
     PGMImage inImg(argv[1]);
@@ -187,16 +176,8 @@ int main(int argc, char **argv)
     int w = inImg.x_dim;
     int h = inImg.y_dim;
 
-    float *d_Cos;
-    float *d_Sin;
-
-    cudaMalloc((void **)&d_Cos, sizeof(float) * degreeBins);
-    cudaMalloc((void **)&d_Sin, sizeof(float) * degreeBins);
-
-    // CPU calculation
     CPU_HoughTran(inImg.pixels, w, h, &cpuht);
 
-    // pre-compute values to be stored
     float *pcCos = (float *)malloc(sizeof(float) * degreeBins);
     float *pcSin = (float *)malloc(sizeof(float) * degreeBins);
     float rad = 0;
@@ -213,13 +194,16 @@ int main(int argc, char **argv)
     cudaMemcpyToSymbol(d_Cos, pcCos, sizeof(float) * degreeBins);
     cudaMemcpyToSymbol(d_Sin, pcSin, sizeof(float) * degreeBins);
 
-    unsigned char *d_in;
-    int *d_hough;
-    int *h_hough = (int *)malloc(degreeBins * rBins * sizeof(int));
+    unsigned char *d_in, *h_in;
+    int *d_hough, *h_hough;
+
+    h_in = inImg.pixels;
+
+    h_hough = (int *)malloc(degreeBins * rBins * sizeof(int));
 
     cudaMalloc((void **)&d_in, sizeof(unsigned char) * w * h);
     cudaMalloc((void **)&d_hough, sizeof(int) * degreeBins * rBins);
-    cudaMemcpy(d_in, inImg.pixels, sizeof(unsigned char) * w * h, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_in, h_in, sizeof(unsigned char) * w * h, cudaMemcpyHostToDevice);
     cudaMemset(d_hough, 0, sizeof(int) * degreeBins * rBins);
 
     // Define CUDA events for timing
@@ -230,8 +214,8 @@ int main(int argc, char **argv)
     // Record the start event
     cudaEventRecord(start, NULL);
 
-    // Launch the kernel
-    int blockNum = ceil((float)w * h / 256.0);
+    int blockNum = ceil(w * h / 256);
+
     GPU_HoughTranConst<<<blockNum, 256>>>(d_in, w, h, d_hough, rMax, rScale);
 
     // Record the stop event
@@ -242,7 +226,8 @@ int main(int argc, char **argv)
     float milliseconds = 0;
     cudaEventElapsedTime(&milliseconds, start, stop);
 
-    // Copy results back to host
+    cudaDeviceSynchronize();
+
     cudaMemcpy(h_hough, d_hough, sizeof(int) * degreeBins * rBins, cudaMemcpyDeviceToHost);
 
     // Calcular el promedio y la desviación estándar
@@ -256,6 +241,8 @@ int main(int argc, char **argv)
 
     // Crear una copia de la imagen de entrada para dibujar las líneas
     unsigned char *outputImage = new unsigned char[w * h * 3]; // 3 canales: RGB
+    const int staticThreshold = 3000;                          // Static threshold set to 3000
+
     for (int i = 0; i < w * h; ++i)
     {
         outputImage[3 * i] = inImg.pixels[i];
@@ -264,11 +251,12 @@ int main(int argc, char **argv)
     }
 
     // Dibujar las líneas cuyo peso es mayor que el umbral dinámico
+    // Dibujar las líneas cuyo peso es mayor que el umbral estático
     for (int rIdx = 0; rIdx < rBins; rIdx++)
     {
         for (int tIdx = 0; tIdx < degreeBins; tIdx++)
         {
-            if (h_hough[rIdx * degreeBins + tIdx] > threshold)
+            if (h_hough[rIdx * degreeBins + tIdx] > staticThreshold)
             {
                 float r = rIdx * rScale - rMax;
                 float theta = tIdx * radInc;
@@ -295,37 +283,26 @@ int main(int argc, char **argv)
     // Guardar la imagen resultante en formato PNG
     stbi_write_png("output_image_constante.png", w, h, 3, outputImage, w * 3);
 
-    // Liberar memoria
+    // Liberar la memoria utilizada
     delete[] outputImage;
 
-    const int tolerance = 1; // Define un margen de tolerancia
-
-    // Compare CPU and GPU results
     for (i = 0; i < degreeBins * rBins; i++)
     {
-        if (abs(cpuht[i] - h_hough[i]) > tolerance)
-        {
-            printf("Mismatch at index %d: CPU=%d, GPU=%d\n", i, cpuht[i], h_hough[i]);
-        }
+        if (cpuht[i] != h_hough[i])
+            printf("Calculation mismatch at : %i %i %i\n", i, cpuht[i], h_hough[i]);
     }
-
+    printf("Done!\n");
     printf("GPU Hough Transform tomo %f milisegundos\n", milliseconds);
-
-    // Free dynamically allocated memory
-    cudaFree(d_Cos);
-    cudaFree(d_Sin);
     cudaFree(d_in);
     cudaFree(d_hough);
+    free(h_hough);
+    free(cpuht);
     free(pcCos);
     free(pcSin);
-    free(h_hough);
-    delete[] cpuht;
 
     // Destroy the events
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
-
-    printf("Done!\n");
 
     return 0;
 }

@@ -224,6 +224,8 @@ int main(int argc, char **argv)
 
   // Crear una copia de la imagen de entrada para dibujar las líneas
   unsigned char *outputImage = new unsigned char[w * h * 3]; // 3 canales: RGB
+  const int staticThreshold = 3000;                          // Static threshold set to 3000
+
   for (int i = 0; i < w * h; ++i)
   {
     outputImage[3 * i] = inImg.pixels[i];
@@ -232,11 +234,12 @@ int main(int argc, char **argv)
   }
 
   // Dibujar las líneas cuyo peso es mayor que el umbral dinámico
+  // Dibujar las líneas cuyo peso es mayor que el umbral estático
   for (int rIdx = 0; rIdx < rBins; rIdx++)
   {
     for (int tIdx = 0; tIdx < degreeBins; tIdx++)
     {
-      if (h_hough[rIdx * degreeBins + tIdx] > threshold)
+      if (h_hough[rIdx * degreeBins + tIdx] > staticThreshold)
       {
         float r = rIdx * rScale - rMax;
         float theta = tIdx * radInc;
