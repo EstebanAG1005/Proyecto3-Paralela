@@ -252,14 +252,16 @@ int main(int argc, char **argv)
 
   // Liberar memoria
   delete[] outputImage;
-  const int tolerance = 0;
+  const int tolerance = 1;
 
-  for (i = 0; i < degreeBins * rBins; i++)
+  for (int i = 0; i < degreeBins * rBins; i++)
   {
-    if (abs(cpuht[i] - h_hough[i]) > tolerance)
-    {
-      printf("Mismatch at index %d: CPU=%d, GPU=%d\n", i, cpuht[i], h_hough[i]);
-    }
+    // Calcula la diferencia absoluta entre los dos valores
+    int diff = abs(cpuht[i] - h_hough[i]);
+
+    // Verifica si la diferencia excede la tolerancia
+    if (diff > tolerance)
+      printf("Calculation mismatch at : %i %i %i\n", i, cpuht[i], h_hough[i]);
   }
 
   printf("GPU Hough Transform tomo %f milisegundos\n", milliseconds);

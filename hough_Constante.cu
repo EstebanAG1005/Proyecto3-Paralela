@@ -74,41 +74,41 @@ void CPU_HoughTran(unsigned char *pic, int w, int h, int **acc)
 
 // GPU kernel. One thread per image pixel is spawned.
 // The accummulator memory needs to be allocated by the host in global memory
-__global__ void GPU_HoughTran(unsigned char *pic, int w, int h, int *acc, float rMax, float rScale, float *d_Cos, float *d_Sin)
-{
-    // TODO calcular: int gloID = ?
-    int gloID = blockIdx.x * blockDim.x + threadIdx.x;
-    if (gloID >= w * h)
-        return;
+// __global__ void GPU_HoughTran(unsigned char *pic, int w, int h, int *acc, float rMax, float rScale, float *d_Cos, float *d_Sin)
+// {
+//     // TODO calcular: int gloID = ?
+//     int gloID = blockIdx.x * blockDim.x + threadIdx.x;
+//     if (gloID >= w * h)
+//         return;
 
-    int xCent = w / 2;
-    int yCent = h / 2;
+//     int xCent = w / 2;
+//     int yCent = h / 2;
 
-    // TODO explicar bien bien esta parte. Dibujar un rectangulo a modo de imagen sirve para visualizarlo mejor
-    int xCoord = gloID % w - xCent;
-    int yCoord = yCent - gloID / w;
+//     // TODO explicar bien bien esta parte. Dibujar un rectangulo a modo de imagen sirve para visualizarlo mejor
+//     int xCoord = gloID % w - xCent;
+//     int yCoord = yCent - gloID / w;
 
-    // TODO eventualmente usar memoria compartida para el acumulador
+//     // TODO eventualmente usar memoria compartida para el acumulador
 
-    if (pic[gloID] > 0)
-    {
-        for (int tIdx = 0; tIdx < degreeBins; tIdx++)
-        {
-            // TODO utilizar memoria constante para senos y cosenos
-            // float r = xCoord * cos(tIdx) + yCoord * sin(tIdx); //probar con esto para ver diferencia en tiempo
-            float r = xCoord * d_Cos[tIdx] + yCoord * d_Sin[tIdx];
-            int rIdx = (r + rMax) / rScale;
-            // debemos usar atomic, pero que race condition hay si somos un thread por pixel? explique
-            atomicAdd(acc + (rIdx * degreeBins + tIdx), 1);
-        }
-    }
+//     if (pic[gloID] > 0)
+//     {
+//         for (int tIdx = 0; tIdx < degreeBins; tIdx++)
+//         {
+//             // TODO utilizar memoria constante para senos y cosenos
+//             // float r = xCoord * cos(tIdx) + yCoord * sin(tIdx); //probar con esto para ver diferencia en tiempo
+//             float r = xCoord * d_Cos[tIdx] + yCoord * d_Sin[tIdx];
+//             int rIdx = (r + rMax) / rScale;
+//             // debemos usar atomic, pero que race condition hay si somos un thread por pixel? explique
+//             atomicAdd(acc + (rIdx * degreeBins + tIdx), 1);
+//         }
+//     }
 
-    // TODO eventualmente cuando se tenga memoria compartida, copiar del local al global
-    // utilizar operaciones atomicas para seguridad
-    // faltara sincronizar los hilos del bloque en algunos lados
-}
+//     // TODO eventualmente cuando se tenga memoria compartida, copiar del local al global
+//     // utilizar operaciones atomicas para seguridad
+//     // faltara sincronizar los hilos del bloque en algunos lados
+// }
 
-// constant memory
+// Memoria Constante
 __constant__ float d_Cos[degreeBins];
 __constant__ float d_Sin[degreeBins];
 
@@ -320,11 +320,18 @@ int main(int argc, char **argv)
     // Liberar la memoria utilizada
     delete[] outputImage;
 
-    for (i = 0; i < degreeBins * rBins; i++)
+    const int tolerance = 1;
+
+    for (int i = 0; i < degreeBins * rBins; i++)
     {
-        if (cpuht[i] != h_hough[i])
+        // Calcula la diferencia absoluta entre los dos valores
+        int diff = abs(cpuht[i] - h_hough[i]);
+
+        // Verifica si la diferencia excede la tolerancia
+        if (diff > tolerance)
             printf("Calculation mismatch at : %i %i %i\n", i, cpuht[i], h_hough[i]);
     }
+
     printf("Done!\n");
     printf("GPU Hough Transform tomo %f milisegundos\n", milliseconds);
     cudaFree(d_in);

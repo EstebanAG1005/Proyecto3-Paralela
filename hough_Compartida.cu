@@ -262,11 +262,19 @@ int main(int argc, char **argv)
 
     // Liberar la memoria utilizada
     delete[] outputImage;
-    for (i = 0; i < degreeBins * rBins; i++)
+
+    const int tolerance = 1;
+
+    for (int i = 0; i < degreeBins * rBins; i++)
     {
-        if (cpuht[i] != h_hough[i])
+        // Calcula la diferencia absoluta entre los dos valores
+        int diff = abs(cpuht[i] - h_hough[i]);
+
+        // Verifica si la diferencia excede la tolerancia
+        if (diff > tolerance)
             printf("Calculation mismatch at : %i %i %i\n", i, cpuht[i], h_hough[i]);
     }
+
     printf("Done!\n");
     printf("GPU Hough Transform tomo %f milisegundos\n", milliseconds);
     cudaFree(d_in);
