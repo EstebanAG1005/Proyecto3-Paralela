@@ -6,6 +6,7 @@
 #include "common/pgm.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#include <algorithm>
 
 const int degreeInc = 2;
 const int degreeBins = 180 / degreeInc;
@@ -109,6 +110,99 @@ void convertToBlackAndWhite(unsigned char *pic, int size, unsigned char threshol
         pic[i] = pic[i] > threshold ? 255 : 0;
     }
 }
+
+void drawLines(unsigned char *outputImage, int w, int h, int *h_hough, float rMax, float rScale)
+{
+    // Define a threshold for considering a line as detected
+    const int detectionThreshold = 3800;
+
+    // Iterate through the Hough space to find lines with sufficient votes
+    for (int rIdx = 0; rIdx < rBins; rIdx++)
+    {
+        for (int tIdx = 0; tIdx < degreeBins; tIdx++)
+        {
+            if (h_hough[rIdx * degreeBins + tIdx] > detectionThreshold)
+            {
+                // Convert Hough space coordinates back to image space
+                float theta = tIdx * radInc;
+                float r = rIdx * rScale - rMax;
+
+                // Calculate the coordinates of two points on the line
+                int x0 = static_cast<int>(w / 2 + r * cos(theta));
+                int y0 = static_cast<int>(h / 2 - r * sin(theta));
+
+                int x1 = static_cast<int>(x0 - (w/2) * (-sin(theta)));
+                int y1 = static_cast<int>(y0 + (h/2) * (cos(theta)));
+
+                // Clip the line coordinates to be within the image boundaries
+                x0 = std::max(0, std::min(x0, w - 1));
+                y0 = std::max(0, std::min(y0, h - 1));
+                x1 = std::max(0, std::min(x1, w - 1));
+                y1 = std::max(0, std::min(y1, h - 1));
+
+                // Draw the line on the output image
+                for (int i = 0; i < 2000; i++)
+                {
+                    int x = static_cast<int>(x0 + i * (x1 - x0) / (w/2));
+                    int y = static_cast<int>(y0 + i * (y1 - y0) / (h/2));
+
+                    // Ensure that the coordinates are within the image boundaries
+                    if (x >= 0 && x < w && y >= 0 && y < h)
+                    {
+                        outputImage[3 * (y * w + x)] = 255;    // Red channel
+                        outputImage[3 * (y * w + x) + 1] = 0;  // Green channel
+                        outputImage[3 * (y * w + x) + 2] = 0;  // Blue channel
+                    }
+                }
+            }
+        }
+    }
+    // Define a threshold for considering a line as detected
+    // const int detectionThreshold = 3800;
+
+    // Iterate through the Hough space to find lines with sufficient votes
+    for (int rIdx = 0; rIdx < rBins; rIdx++)
+    {
+        for (int tIdx = 0; tIdx < degreeBins; tIdx++)
+        {
+            if (h_hough[rIdx * degreeBins + tIdx] > detectionThreshold)
+            {
+                // Convert Hough space coordinates back to image space
+                float theta = tIdx * radInc;
+                float r = rIdx * rScale - rMax;
+
+                // Calculate the coordinates of two points on the line
+                int x0 = static_cast<int>(w / 2 + r * cos(theta));
+                int y0 = static_cast<int>(h / 2 - r * sin(theta));
+
+                int x1 = static_cast<int>(x0 - (w/2) * (-sin(theta)));
+                int y1 = static_cast<int>(y0 + (h/2) * (cos(theta)));
+
+                // Clip the line coordinates to be within the image boundaries
+                x0 = std::max(0, std::min(x0, w - 1));
+                y0 = std::max(0, std::min(y0, h - 1));
+                x1 = std::max(0, std::min(x1, w - 1));
+                y1 = std::max(0, std::min(y1, h - 1));
+
+                // Draw the line on the output image
+                for (int i = 0; i < 2000; i++)
+                {
+                    int x = w - static_cast<int>(x0 + i * (x1 - x0) / (w/2));
+                    int y = static_cast<int>(y0 + i * (y1 - y0) / (h/2));
+
+                    // Ensure that the coordinates are within the image boundaries
+                    if (x >= 0 && x < w && y >= 0 && y < h)
+                    {
+                        outputImage[3 * (y * w + x)] = 255;    // Red channel
+                        outputImage[3 * (y * w + x) + 1] = 0;  // Green channel
+                        outputImage[3 * (y * w + x) + 2] = 0;  // Blue channel
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 int main(int argc, char **argv)
 {
@@ -223,6 +317,7 @@ int main(int argc, char **argv)
         }
     }
 
+    drawLines(outputImage, w, h, h_hough, rMax, rScale);
     // Guardar la imagen resultante en formato PNG
     stbi_write_png("output_image_compartida.png", w, h, 3, outputImage, w * 3);
 
